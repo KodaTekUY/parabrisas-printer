@@ -1,0 +1,17 @@
+README.md
+pyproject.toml
+app/__init__.py
+app/api_client.py
+app/config.py
+app/main.py
+app/models.py
+app/printer.py
+app/tspl.py
+app/worker.py
+parabrisas_printer.egg-info/PKG-INFO
+parabrisas_printer.egg-info/SOURCES.txt
+parabrisas_printer.egg-info/dependency_links.txt
+parabrisas_printer.egg-info/requires.txt
+parabrisas_printer.egg-info/top_level.txt
+tests/test_tspl.py
+tests/test_worker.py
