@@ -1,6 +1,7 @@
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from .config import PrinterId
 
 
 class StrictModel(BaseModel):
@@ -82,6 +83,7 @@ class PrintDocument(StrictModel):
 
 class ClaimedPrintJob(StrictModel):
     id: str
+    printer_id: PrinterId = Field(alias="printerId")
     document_type: Literal["operativa", "cobro"] = Field(alias="documentType")
     attempts: int = Field(ge=1)
     payload: PrintDocument
@@ -89,5 +91,6 @@ class ClaimedPrintJob(StrictModel):
 
 class PrintResult(StrictModel):
     agent_id: str = Field(alias="agentId")
+    printer_id: PrinterId = Field(alias="printerId")
     status: Literal["sent", "failed"]
     error: str | None = Field(default=None, min_length=1, max_length=1000)

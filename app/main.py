@@ -19,23 +19,27 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     settings = get_settings()
     client = PrintQueueClient(settings)
-    printer = LanPrinter(settings)
-    worker = PrintWorker(client, printer, settings.poll_interval_seconds)
     stop = asyncio.Event()
-    task = asyncio.create_task(worker.run(stop), name="print-polling-worker")
-    app.state.printer = printer
-    app.state.worker_task = task
+    printers = [LanPrinter(settings, config) for config in settings.printers]
+    tasks = [asyncio.create_task(
+        PrintWorker(client, printer, settings.poll_interval_seconds, printer.config.printer_id).run(stop),
+        name=f"print-worker-{printer.config.printer_id}",
+    ) for printer in printers]
+    app.state.printers = printers
+    app.state.worker_tasks = tasks
     try:
         yield
     finally:
         stop.set()
-        await task
-        await client.close()
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            await client.close()
 
 
 app = FastAPI(
     title="Parabrisas Printer",
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -48,12 +52,17 @@ async def health():
     return {
         "ok": True,
         "agentId": settings.print_agent_id,
-        "printer": f"{settings.printer_host}:{settings.printer_port}",
+        "printers": [{"printerId": printer.printer_id, "name": printer.name,
+                      "ip": str(printer.ip), "port": settings.printer_port}
+                     for printer in settings.printers],
     }
 
 
 @app.get("/health/printer")
 async def printer_health():
-    printer: LanPrinter = app.state.printer
-    connected = await printer.health()
-    return {"ok": connected}
+    printers: list[LanPrinter] = app.state.printers
+    connected = await asyncio.gather(*(printer.health() for printer in printers))
+    return {"ok": all(connected), "printers": [
+        {"printerId": printer.config.printer_id, "name": printer.config.name, "ok": ok}
+        for printer, ok in zip(printers, connected, strict=True)
+    ]}

@@ -1,6 +1,6 @@
 import httpx
 
-from .config import Settings
+from .config import PrinterId, Settings
 from .models import ClaimedPrintJob
 
 
@@ -19,25 +19,29 @@ class PrintQueueClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def claim(self) -> ClaimedPrintJob | None:
+    async def claim(self, printer_id: PrinterId) -> ClaimedPrintJob | None:
         response = await self._client.post(
             "/api/printing/jobs/claim",
-            json={"agentId": self._settings.print_agent_id},
+            json={"agentId": self._settings.print_agent_id, "printerId": printer_id},
         )
         if response.status_code == 204:
             return None
         response.raise_for_status()
-        return ClaimedPrintJob.model_validate(response.json())
+        job = ClaimedPrintJob.model_validate(response.json())
+        if job.printer_id != printer_id:
+            raise ValueError("La API devolvió una impresión de otro destino")
+        return job
 
-    async def report_sent(self, job_id: str) -> None:
-        await self._report(job_id, status="sent")
+    async def report_sent(self, job_id: str, printer_id: PrinterId) -> None:
+        await self._report(job_id, printer_id, status="sent")
 
-    async def report_failed(self, job_id: str, error: str) -> None:
-        await self._report(job_id, status="failed", error=error[:1000] or "Error de impresión")
+    async def report_failed(self, job_id: str, printer_id: PrinterId, error: str) -> None:
+        await self._report(job_id, printer_id, status="failed", error=error[:1000] or "Error de impresión")
 
-    async def _report(self, job_id: str, *, status: str, error: str | None = None) -> None:
+    async def _report(self, job_id: str, printer_id: PrinterId, *, status: str, error: str | None = None) -> None:
         payload: dict[str, str] = {
             "agentId": self._settings.print_agent_id,
+            "printerId": printer_id,
             "status": status,
         }
         if error:
