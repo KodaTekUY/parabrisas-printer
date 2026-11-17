@@ -39,3 +39,21 @@ def test_reads_json_environment(monkeypatch):
     monkeypatch.setenv("PRINTERS", '[{"name":"Facturación","ip":"192.168.1.50"}]')
     config = Settings(_env_file=None, system_api_url="https://test.example.com", print_agent_api_key="secret")
     assert config.printers[0].printer_id == "facturacion"
+
+
+@pytest.mark.parametrize("values", [
+    {"log_retention_files": 0}, {"log_retention_files": 1},
+    {"log_level": "verbose"}, {"log_dir": "   "},
+])
+def test_rejects_invalid_logging_configuration(values):
+    from app.config import LoggingSettings
+    with pytest.raises(ValidationError):
+        LoggingSettings(_env_file=None, **values)
+
+
+def test_logging_settings_work_before_api_configuration_is_available():
+    from app.config import LoggingSettings
+    config = LoggingSettings(_env_file=None, log_level="info")
+    assert config.log_level == "INFO"
+    assert config.log_retention_files == 14
+    assert str(config.log_dir) == "logs"

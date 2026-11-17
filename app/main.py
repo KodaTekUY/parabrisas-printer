@@ -5,24 +5,33 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .api_client import PrintQueueClient
-from .config import get_settings
+from .config import LoggingSettings, get_settings
+from .logging_config import configure_logging, log_context
 from .printer import LanPrinter
 from .worker import PrintWorker
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
+    configure_logging(LoggingSettings())
+    try:
+        settings = get_settings()
+    except Exception:
+        logger.exception("Configuración del agente inválida", extra={"event": "configuration_failed"})
+        # Uvicorn registra el traceback como texto: no propagar valores de entrada.
+        raise RuntimeError("Configuración inválida; revisar el evento configuration_failed") from None
+    logger.info("Agente de impresión iniciado", extra={"event": "agent_started"})
     client = PrintQueueClient(settings)
     stop = asyncio.Event()
     printers = [LanPrinter(settings, config) for config in settings.printers]
+    for printer in printers:
+        with log_context(**printer.log_fields):
+            logger.info("Destino configurado", extra={"event": "printer_configured"})
     tasks = [asyncio.create_task(
-        PrintWorker(client, printer, settings.poll_interval_seconds, printer.config.printer_id).run(stop),
+        PrintWorker(client, printer, settings.poll_interval_seconds, printer.config.printer_id,
+                    log_fields=printer.log_fields).run(stop),
         name=f"print-worker-{printer.config.printer_id}",
     ) for printer in printers]
     app.state.printers = printers
@@ -35,6 +44,7 @@ async def lifespan(app: FastAPI):
             await asyncio.gather(*tasks)
         finally:
             await client.close()
+            logger.info("Agente de impresión detenido", extra={"event": "agent_stopped"})
 
 
 app = FastAPI(

@@ -43,13 +43,66 @@ curl http://localhost:8000/health/printer
 `/health` lista los destinos configurados y `/health/printer` informa conectividad por impresora (consulta en paralelo). Confirma que el puerto TCP acepta conexiones; no puede
 garantizar que el papel haya salido físicamente.
 
+## Logs persistentes
+
+El agente usa logging nativo de Python, sin dependencias adicionales. Al iniciar con
+`python -m app` (también es el comando de Docker), captura desde el arranque los mensajes
+propios y de Uvicorn. Usar un solo proceso servidor por archivo de logs.
+
+- Los archivos quedan en la carpeta `logs` junto a `compose.yml` en la PC anfitriona.
+  El montaje `./logs:/app/logs` conserva el historial al reiniciar o recrear el contenedor.
+- El archivo activo es `printer-agent.log`; los históricos llevan sufijo `.AAAA-MM-DD`.
+- Se rota a medianoche, con el primer evento del nuevo día. En Docker se usa
+  `TZ=America/Montevideo`; al ejecutar Python directamente se usa la zona horaria del sistema.
+- `LOG_RETENTION_FILES=14` conserva el activo y hasta 13 históricos. Es retención por
+  cantidad de archivos diarios, no por antigüedad exacta durante días sin actividad.
+  La rotación diaria no impone un límite de tamaño a cada archivo.
+- `LOG_LEVEL=INFO` admite DEBUG, INFO, WARNING, ERROR y CRITICAL.
+  `LOG_DIR=logs` define la carpeta en ejecución directa; Compose fija `/app/logs` dentro del contenedor.
+- Los archivos son texto UTF-8 con fecha y offset horario, evento, agente,
+  impresora, IP/puerto, trabajo, intento, etapa y duración cuando corresponde.
+  No se registra el contenido del ticket, credenciales ni argumentos de excepciones;
+  los errores incluyen tipo, códigos disponibles y frames del traceback.
+
+Cada respuesta **204 No Content** se registra a nivel INFO. Si el último registro
+persistido también era un No Content, se reemplaza esa línea por la respuesta más
+reciente, incluyendo su hora, impresora y duración. Esta regla es global entre
+impresoras. Un trabajo, error u otro evento corta la secuencia: sus registros nunca
+se reemplazan. Al cambiar de día se inicia una nueva línea en el archivo nuevo.
+
+La consola de Docker no permite sobrescribir entradas capturadas: muestra el primer
+No Content de cada secuencia y omite las repeticiones consecutivas. El archivo mantiene
+la **última** respuesta actualizada. Los mensajes automáticos repetidos de HTTPX se
+sustituyen por estos eventos propios, también en DEBUG.
+
+Se distinguen `job_claimed`, `tcp_connected`, `tcp_sent` y `result_confirmed`.
+Un envío TCP terminado **no confirma que haya salido papel**. Si el reporte al
+servidor falla después del envío, queda identificado por separado.
+
+Si falla la escritura en disco, el agente continúa imprimiendo y deja una advertencia
+en consola. Los fallos de escritura se reintentan con los eventos siguientes y se
+informa su recuperación; la advertencia no se repite en cada consulta. Los errores
+que impidan construir el handler al arrancar requieren corregir el acceso y reiniciar.
+Docker conserva además su propia salida con un máximo de tres archivos de 10 MiB.
+
+Después de actualizar el código, recrear el servicio para aplicar el montaje y los
+límites de Docker. No se importan automáticamente logs de contenedores anteriores.
+Comandos compatibles con **CMD**:
+
+```bat
+docker compose up -d --build printer-agent
+notepad logs\printer-agent.log
+findstr /C:"printerId=facturacion" logs\printer-agent.log*
+docker compose logs --tail 100 printer-agent
+```
+
 ## Desarrollo
 
 ```bash
 python -m venv .venv
 source .venv/Scripts/activate
 pip install -e '.[dev]'
-uvicorn app.main:app --reload
+python -m app
 pytest
 ```
 

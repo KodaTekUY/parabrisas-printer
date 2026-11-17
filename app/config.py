@@ -1,8 +1,9 @@
 from functools import lru_cache
 from ipaddress import IPv4Address, IPv6Address
+from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PrinterId = Literal["mostrador_1", "mostrador_2", "facturacion", "pista"]
@@ -25,7 +26,7 @@ class PrinterConfig(BaseModel):
         return PRINTER_IDS[self.name]
 
 
-class Settings(BaseSettings):
+class LoggingSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -33,9 +34,28 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_dir: Path = Path("logs")
+    log_retention_files: int = Field(default=14, ge=2, le=366)
+    print_agent_id: str = Field(default="xp470l-01", pattern=r"^[a-zA-Z0-9._-]{1,64}$")
+    print_agent_api_key: SecretStr | None = None
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def normalize_log_level(cls, value):
+        return value.strip().upper() if isinstance(value, str) else value
+
+    @field_validator("log_dir", mode="before")
+    @classmethod
+    def validate_log_dir(cls, value):
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("LOG_DIR no puede estar vacío")
+        return value
+
+
+class Settings(LoggingSettings):
     system_api_url: str = Field(min_length=8)
     print_agent_api_key: SecretStr
-    print_agent_id: str = Field(default="xp470l-01", pattern=r"^[a-zA-Z0-9._-]{1,64}$")
 
     printers: list[PrinterConfig] = Field(min_length=1, max_length=4)
     printer_port: int = Field(default=9100, ge=1, le=65535)

@@ -1,7 +1,12 @@
+import logging
+from time import perf_counter
+
 import httpx
 
 from .config import PrinterId, Settings
 from .models import ClaimedPrintJob
+
+logger = logging.getLogger(__name__)
 
 
 class PrintQueueClient:
@@ -20,11 +25,16 @@ class PrintQueueClient:
         await self._client.aclose()
 
     async def claim(self, printer_id: PrinterId) -> ClaimedPrintJob | None:
+        started = perf_counter()
         response = await self._client.post(
             "/api/printing/jobs/claim",
             json={"agentId": self._settings.print_agent_id, "printerId": printer_id},
         )
         if response.status_code == 204:
+            logger.info("HTTP 204 No Content; sin trabajos disponibles", extra={
+                "event": "queue_empty", "printerId": printer_id, "statusCode": 204,
+                "durationMs": round((perf_counter() - started) * 1000, 2),
+            })
             return None
         response.raise_for_status()
         job = ClaimedPrintJob.model_validate(response.json())
@@ -46,8 +56,14 @@ class PrintQueueClient:
         }
         if error:
             payload["error"] = error
+        started = perf_counter()
         response = await self._client.post(
             f"/api/printing/jobs/{job_id}/result",
             json=payload,
         )
         response.raise_for_status()
+        logger.info("Servidor confirmó el resultado del trabajo", extra={
+            "event": "result_confirmed", "stage": "api_result", "jobId": job_id,
+            "printerId": printer_id, "result": status, "statusCode": response.status_code,
+            "durationMs": round((perf_counter() - started) * 1000, 2),
+        })
